@@ -183,11 +183,12 @@ def to_lower_zero(sentence):
     return new_sentence
 
 
-def get_data_bioes(data_path):
+def get_data_bioes(data_path, use_lower_zero=True):
     '''get bioes data
 
     Args:
         data_path (str): the path of raw data
+        use_lower_zero (bool): lowercase characters and transform numbers to zero
 
     Returns:
         new_sentences (list): list of list
@@ -196,17 +197,18 @@ def get_data_bioes(data_path):
 
     sentences, _, _, tags = get_data_from_txt(data_path)
 
-    new_sentences = [to_lower_zero(sentence) for sentence in sentences]
+    new_sentences = [to_lower_zero(sentence) if use_lower_zero else sentence for sentence in sentences]
     new_tags = [bio_bioes(tag) for tag in tags]
 
     return new_sentences, new_tags
 
 
-def get_data_bio2(data_path):
+def get_data_bio2(data_path, use_lower_zero=True):
     '''get bio2 data
 
     Args:
         data_path (str): the path of raw data
+        use_lower_zero (bool): lowercase characters and transform numbers to zero
 
     Returns:
         new_sentences (list): list of list
@@ -217,7 +219,7 @@ def get_data_bio2(data_path):
     ofile = os.path.join(root, filename.split('.')[0] + '_bio2.txt')
     transform(ifile, ofile)
     sentences, _, _, tags = get_data_from_txt(ofile)
-    new_sentences = [to_lower_zero(sentence) for sentence in sentences]
+    new_sentences = [to_lower_zero(sentence) if use_lower_zero else sentence for sentence in sentences]
     new_tags = tags
 
     return new_sentences, new_tags
