@@ -188,15 +188,15 @@ def main(config):
     for epoch_index in range(config.num_epochs):
         train(train_data_loader)
         train_f1 = evaluate(train_data_loader)
-        logging.info("train f1: {.3f}".format(train_f1))
+        logging.info("train f1: {:.3f}".format(train_f1))
         dev_f1 = evaluate(dev_data_loader)
-        logging.info("dev f1: {.3f}, previous best dev f1: {.3f}".format(train_f1, best_dev_f1))
+        logging.info("dev f1: {:.3f}, previous best dev f1: {:.3f}".format(train_f1, best_dev_f1))
         if dev_f1 > best_dev_f1:
-            logging.info("update the best dev f1 to be: {.3f}".format(best_dev_f1))
+            logging.info("update the best dev f1 to be: {:.3f}".format(best_dev_f1))
             best_dev_f1 = dev_f1
             best_epoch = epoch_index
             test_f1 = evaluate(test_data_loader)
-            logging.info("test f1: {.3f}".format(test_f1))
+            logging.info("test f1: {:.3f}".format(test_f1))
         logging.info("current best epoch: {:d}".format(best_epoch))
 
 
