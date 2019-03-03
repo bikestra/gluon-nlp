@@ -3,15 +3,22 @@
 import argparse
 import logging
 
+import numpy as np
 import mxnet as mx
+import random
+import pickle
 
 import gluonnlp as nlp
 
+from bert_common import *
 from bert_data import BERTTaggingDataset, NULL_TAG
 from bert_model import BERTTagger
 
 # TODO: currently, our evaluation is dependent on this package. figure out whether to take actual dependency on it.
 import seqeval.metrics
+
+from gluonnlp.model.bert import *
+from gluonnlp.vocab import BERTVocab
 
 
 def str2bool(v: str):
@@ -54,6 +61,9 @@ def parse_args():
     arg_parser.add_argument("--test-path", type=str, required=True,
                             help="Path to the test data file")
 
+    arg_parser.add_argument("--save-checkpoint-prefix", type=str, required=False, default=None,
+                            help="Prefix of model checkpoint file")
+
     # bert options
     arg_parser.add_argument("--bert-model", type=str, default="bert_12_768_12",
                             help="Name of the BERT model")
@@ -63,13 +73,15 @@ def parse_args():
                             help="Dropout probability for the last layer")
 
     # optimization parameters
+    arg_parser.add_argument("--seed", type=int, default=13531,
+                            help='Random number seed.')
     arg_parser.add_argument("--seq-len", type=int, default=180,
                             help="The length of the sequence input to BERT."
                                  " An exception will raised if this is not large enough.")
     arg_parser.add_argument("--gpu", type=int,
                             help='Number (index) of GPU to run on, e.g. 0.  If not specified, uses CPU.')
     arg_parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
-    arg_parser.add_argument("--num-epochs", type=int, default=10, help="Number of epochs to train")
+    arg_parser.add_argument("--num-epochs", type=int, default=4, help="Number of epochs to train")
     arg_parser.add_argument("--optimizer", type=str, default="bertadam", help="Optimization algorithm to use")
     arg_parser.add_argument("--learning-rate", type=float, default=5e-5, help="Learning rate for optimization")
     args = arg_parser.parse_args()
@@ -77,6 +89,13 @@ def parse_args():
 
 
 def main(config):
+    # random seed
+    np.random.seed(config.seed)
+    random.seed(config.seed)
+    mx.random.seed(config.seed)
+
+    warmup_ratio = 0.1
+
     if config.cased:
         bert_dataset_name = 'book_corpus_wiki_en_cased'
     else:
@@ -92,7 +111,8 @@ def main(config):
         ctx=ctx,
         use_pooler=False,
         use_decoder=False,
-        use_classifier=False)
+        use_classifier=False,
+        dropout=config.dropout_prob, embed_dropout=config.dropout_prob)
 
     dataset = BERTTaggingDataset(text_vocab, config.train_path, config.dev_path, config.test_path,
                                  config.seq_len, config.cased)
@@ -110,6 +130,12 @@ def main(config):
     loss_function = mx.gluon.loss.SoftmaxCrossEntropyLoss()
     loss_function.hybridize(static_alloc=True)
 
+    step_size = config.batch_size
+    num_train_steps = int(len(dataset.train_inputs) / step_size * config.num_epochs)
+    # warmup_ratio = args.warmup_ratio
+    num_warmup_steps = int(num_train_steps * warmup_ratio)
+    step_num = 0
+
     optimizer_params = {'learning_rate': config.learning_rate}
     try:
         trainer = mx.gluon.Trainer(net.collect_params(), config.optimizer, optimizer_params)
@@ -126,10 +152,25 @@ def main(config):
         v.wd_mult = 0.0
     params = [p for p in net.collect_params().values() if p.grad_req != 'null']
 
+    if config.save_checkpoint_prefix is not None:
+        logging.info("dumping metadata...")
+        metadata = {"config": config, "tag_vocab": dataset.tag_vocab}
+        with open(metadata_file_path(config.save_checkpoint_prefix), "wb") as ofp:
+            pickle.dump(metadata, ofp)
+
     def train(data_loader):
+        nonlocal step_num
         for batch_id, data in enumerate(data_loader):
             logging.info("training on batch index: {}/{}".format(batch_id, len(data_loader)))
 
+            step_num += 1
+            if step_num < num_warmup_steps:
+                new_lr = config.learning_rate * step_num / num_warmup_steps
+            else:
+                offset = (step_num - num_warmup_steps) * config.learning_rate / (
+                        num_train_steps - num_warmup_steps)
+                new_lr = config.learning_rate - offset
+            trainer.set_learning_rate(new_lr)
             text_ids, token_types, valid_length, tag_ids, flag_nonnull_tag = \
                 [x.astype('float32').as_in_context(ctx) for x in data]
 
@@ -175,6 +216,29 @@ def main(config):
                     else:
                         entries.append((token_text, true_tag, pred_tag))
 
+                # do sanity check on tags
+                # now_entity = None
+                # for entry in entries:
+                #     this_tag = entry[2]
+                #     if this_tag.startswith("B"):
+                #         if now_entity is not None:
+                #             logging.warning("there was an entity already in process: {}".format(entries))
+                #         now_entity = this_tag[2:]
+                #     elif this_tag.startswith("S"):
+                #         if now_entity is not None:
+                #             logging.warning("there was an entity already in process (S): {}".format(entries))
+                #     elif this_tag.startswith("I"):
+                #         if now_entity is None:
+                #             logging.warning("no entity was started but was continued: {}".format(entries))
+                #         elif this_tag[2:] != now_entity:
+                #             logging.warning("entity type was not consistent: {}".format(entries))
+                #     elif this_tag.startswith("E"):
+                #         if now_entity is None:
+                #             logging.warning("no entity was started but was ended: {}".format(entries))
+                #         elif this_tag[2:] != now_entity:
+                #             logging.warning("entity type was not consistent: {}".format(entries))
+                #         now_entity = None
+
                 entries_list.append(entries)
 
         all_true_tags = [[entry[1] for entry in entries] for entries in entries_list]
@@ -197,6 +261,12 @@ def main(config):
             logging.info("update the best dev f1 to be: {:.3f}".format(best_dev_f1))
             test_f1 = evaluate(test_data_loader)
             logging.info("test f1: {:.3f}".format(test_f1))
+
+            # save params
+            params_file = config.save_checkpoint_prefix + "_{:03d}.params".format(epoch_index)
+            logging.info("saving current checkpoint to: {}".format(params_file))
+            net.save_parameters(params_file)
+
         logging.info("current best epoch: {:d}".format(best_epoch))
 
 
