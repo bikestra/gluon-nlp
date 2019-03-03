@@ -69,7 +69,7 @@ def parse_args():
                             help="Name of the BERT model")
     arg_parser.add_argument("--cased", type=str2bool, default=True,
                             help="Path to the development data file")
-    arg_parser.add_argument("--dropout-prob", type=float, default=0.5,
+    arg_parser.add_argument("--dropout-prob", type=float, default=0.1,
                             help="Dropout probability for the last layer")
 
     # optimization parameters
