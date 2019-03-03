@@ -113,7 +113,7 @@ class BERTTaggingDataset(object):
 
         logging.info("example train sentences:")
         for i in range(10):
-            logging.info("{}", format(train_sentences[i]))
+            logging.info("{}".format(train_sentences[i]))
 
         self.train_inputs = [self.encode_as_input(sentence) for sentence in train_sentences]
         self.dev_inputs = [self.encode_as_input(sentence) for sentence in dev_sentences]
